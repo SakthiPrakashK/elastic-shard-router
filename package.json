@@ -1,6 +1,6 @@
 {
   "name": "elastic-shard-router",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -40,5 +40,13 @@
   },
   "dependencies": {
     "@elastic/elasticsearch": "^9.0.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SakthiPrakashK/elastic-shard-router.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SakthiPrakashK/elastic-shard-router/issues"
+  },
+  "homepage": "https://github.com/SakthiPrakashK/elastic-shard-router#readme"
 }
