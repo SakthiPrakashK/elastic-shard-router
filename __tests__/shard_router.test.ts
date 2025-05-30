@@ -44,4 +44,26 @@ describe('ShardRouter', () => {
       expect(shard).toBe(0);
     }
   });
+
+  it('should allocate tenants to shards and return correct routing keys', async () => {
+    const router = new ShardRouter(esClient, 'test-index');
+    await router.initialize();
+    const tenantAKey = router.getRoutingKeyForTenant('tenantA');
+    const tenantBKey = router.getRoutingKeyForTenant('tenantB');
+    const tenantCKey = router.getRoutingKeyForTenant('tenantC');
+    // Should allocate in round robin: tenantA->0, tenantB->1, tenantC->0 (since 2 shards)
+    expect(typeof tenantAKey).toBe('string');
+    expect(typeof tenantBKey).toBe('string');
+    expect(typeof tenantCKey).toBe('string');
+    // Should return same key for same tenant
+    expect(router.getRoutingKeyForTenant('tenantA')).toBe(tenantAKey);
+    expect(router.getRoutingKeyForTenant('tenantB')).toBe(tenantBKey);
+    // Should map tenants to correct shards
+    const mapping = router.getShardTenantMapping();
+    expect(Array.from(mapping.get(0) || [])).toContain('tenantA');
+    expect(Array.from(mapping.get(1) || [])).toContain('tenantB');
+    expect(Array.from(mapping.get(0) || [])).toContain('tenantC');
+    // Should not allocate a new shard for existing tenant
+    expect(router.getRoutingKeyForTenant('tenantA')).toBe(tenantAKey);
+  });
 });

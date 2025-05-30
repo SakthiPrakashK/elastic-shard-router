@@ -1,76 +1,92 @@
 # elastic-shard-router
 
-A TypeScript Node.js library for deterministic Elasticsearch routing key generation and verification.
+A TypeScript Node.js library to generate, verify, and map deterministic Elasticsearch routing keys to specific shards, enabling precise document placement and retrieval.
 
-## Installation
+## What is this library for?
 
-```sh
-npm install elastic-shard-router
-```
+`elastic-shard-router` is designed to help you control and understand how documents are routed to shards in an Elasticsearch index. It allows you to:
+- Generate deterministic routing keys for each shard, so you know exactly which shard a document will be stored in.
+- Implement strict multi-tenant isolation by assigning tenants to specific shards and always using the correct routing key for each tenant.
+- Support custom tenant-to-shard allocation strategies (e.g., round-robin, least-loaded, or your own logic).
+- Verify and calculate shard assignments for any routing key, making migrations and audits easy.
 
-## Usage Guide
+This is especially useful for:
+- Multi-tenant SaaS platforms that want to guarantee tenant data isolation at the shard level.
+- Performance optimization by controlling document distribution across shards.
+- Data migration, rebalancing, or compliance scenarios where deterministic routing is required.
 
-### 1. Import and Instantiate
+## API Reference
 
-```typescript
-import { ShardRouter } from 'elastic-shard-router';
-import { Client } from '@elastic/elasticsearch';
-
-const esClient = new Client({ node: 'http://localhost:9200' });
-const router = new ShardRouter(esClient, 'your-index', 'optionalPrefix_', '_optionalSuffix');
-await router.initialize(); // Initialization is manual
-```
-
-#### ShardRouter Constructor Options
-- `esClient` (**required**): An Elasticsearch JS client instance.
-- `indexName` (**required**): The name of the Elasticsearch index.
-- `prefix` (optional): String to prepend to all generated routing keys.
-- `suffix` (optional): String to append to all generated routing keys.
-
-### 2. Generate a Routing Key for a Shard
+### ShardRouter Constructor
 
 ```typescript
-const routingKey = router.getRoutingKeyForShard(0); // Get routing key for shard 0
-console.log('Routing Key:', routingKey);
+new ShardRouter(
+  esClient: ElasticsearchClient,
+  indexName: string,
+  prefix?: string,
+  suffix?: string,
+  tenantDistributionAlgo?: (
+    tenantId: string,
+    tenantShardMap: Map<string, number>,
+    shardTenantMap: Map<number, string[]>,
+    numberOfShards: number
+  ) => number
+)
 ```
 
-### 3. Verify a Routing Key
+**Parameters:**
+- `esClient` (**required**): Elasticsearch client instance from `@elastic/elasticsearch`.
+- `indexName` (**required**): Name of the Elasticsearch index.
+- `prefix` (optional): String to prepend to all generated routing keys (default: '').
+- `suffix` (optional): String to append to all generated routing keys (default: '').
+- `tenantDistributionAlgo` (optional): Custom function to control tenant-to-shard assignment. Receives the tenant ID, current tenant-to-shard and shard-to-tenant mappings, and the number of shards. Should return the shard number to assign the tenant to. Defaults to round-robin allocation.
 
+### getRoutingKeyForTenant(tenantId: string): string | undefined
+Returns the routing key for a given tenant, allocating the tenant to a shard if not already assigned. This is the recommended way to route multi-tenant data.
+
+**Usage:**
 ```typescript
-const isValid = router.verifyRoutingKey(routingKey, 0); // Check if key routes to shard 0
-console.log('Is Valid:', isValid);
+const router = new ShardRouter(esClient, 'your-index', 'key-');
+await router.initialize();
+const routingKey = router.getRoutingKeyForTenant('tenantA');
+await esClient.index({
+  index: 'your-index',
+  routing: routingKey,
+  body: { tenantId: 'tenantA', data: 'Tenant A data' }
+});
 ```
 
-### 4. Get All Routing Keys
+### getAllRoutingKeys(): Map<number, string>
+Returns all precomputed routing keys as a Map with shard numbers as keys. Useful for bulk operations or direct shard access.
 
+**Usage:**
 ```typescript
 const allKeys = router.getAllRoutingKeys();
-console.log(allKeys);
+for (const [shardNum, routingKey] of allKeys) {
+  // Use routingKey for direct shard operations
+}
 ```
 
-### 5. Calculate Shard for a Routing Key
+---
 
-```typescript
-const shardNum = router.calculateShardForRoutingKey(routingKey);
-console.log('Shard Number:', shardNum);
-```
+### Other Methods (simple descriptions)
 
-## TypeScript Support
+- **initialize(): Promise<void>**  
+  Loads index metadata and precomputes routing keys. Must be called before using routing methods.
 
-Type definitions are included. No need to install `@types/elastic-shard-router`.
+- **getRoutingKeyForShard(shardNumber: number): string | undefined**  
+  Returns the precomputed routing key for a specific shard.
 
-## License
+- **verifyRoutingKey(routingKey: string, expectedShard: number): boolean**  
+  Checks if a routing key maps to the expected shard.
 
-ISC
+- **calculateShardForRoutingKey(routingKey: string): number**  
+  Calculates which shard a routing key will route to.
 
-## Contributing
+- **getShardTenantMapping(): Map<number, string[]>**  
+  Returns the current mapping of shard numbers to arrays of tenant IDs.
 
-Contributions are welcome! To contribute:
 
-1. Fork this repository and create your branch from `main`.
-2. Make your changes with clear commit messages.
-3. Ensure your code is TypeScript compatible and passes lint/build checks.
-4. Add or update tests if applicable.
-5. Submit a pull request describing your changes.
+## Examples
 
-For questions or feature requests, please open an issue.
+See the `examples/` directory for detailed usage patterns, including multi-tenant allocation, bulk indexing, and migration scenarios.

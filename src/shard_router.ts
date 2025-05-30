@@ -14,6 +14,10 @@ export class ShardRouter {
   private suffix: string;
   private metadata!: ShardRouterIndexMetadata;
   private routingKeys: Map<number, string> = new Map();
+  private shardTenantMap: Map<number, string[]> = new Map();
+  private tenantShardMap: Map<string, number> = new Map();
+  private nextShard: number = 0;
+  private tenantDistributionAlgo: (tenantId: string, tenantShardMap: Map<string, number>, shardTenantMap: Map<number, string[]>, numberOfShards: number) => number;
 
   /**
    * Creates a new ShardRouter instance.
@@ -21,12 +25,14 @@ export class ShardRouter {
    * @param indexName Name of the Elasticsearch index.
    * @param prefix Optional prefix for routing keys.
    * @param suffix Optional suffix for routing keys.
+   * @param tenantDistributionAlgo Optional distribution algorithm for tenant-to-shard assignment.
    */
   constructor(
     esClient: ElasticsearchClient,
     indexName: string,
     prefix: string = '',
     suffix: string = '',
+    tenantDistributionAlgo?: (tenantId: string, tenantShardMap: Map<string, number>, shardTenantMap: Map<number, string[]>, numberOfShards: number) => number
   ) {
     if (!esClient) {
       throw new Error('esClient is required');
@@ -38,8 +44,24 @@ export class ShardRouter {
     this.indexName = indexName;
     this.prefix = prefix;
     this.suffix = suffix;
+    this.tenantDistributionAlgo = tenantDistributionAlgo || this.defaultRoundRobinAlgo;
     // Initialization is now manual. Call initialize() before using routing methods.
   }
+
+  /**
+   * Default round robin distribution algorithm for tenant-to-shard assignment.
+   */
+  private defaultRoundRobinAlgo = (
+    tenantId: string,
+    tenantShardMap: Map<string, number>,
+    shardTenantMap: Map<number, string[]>,
+    numberOfShards: number
+  ): number => {
+    // Assign to next shard in round robin fashion
+    const assignedShard = this.nextShard;
+    this.nextShard = (this.nextShard + 1) % numberOfShards;
+    return assignedShard;
+  };
 
   /**
    * Initializes the router by loading index metadata and precomputing routing keys.
@@ -225,5 +247,47 @@ export class ShardRouter {
     }
     const hashVal: number = EsShardRouterMurmur3Hash.hash(routingKey);
     return Math.floor((hashVal % this.metadata.routing_num_shards) / this.metadata.routing_factor);
+  }
+
+  /**
+   * Returns the routing key for a given tenant, allocating the tenant to a shard if not already assigned.
+   * @param tenantId The tenant identifier.
+   * @returns The routing key for the tenant's assigned shard.
+   */
+  public getRoutingKeyForTenant(tenantId: string): string | undefined {
+    if (!this.metadata) {
+      throw new Error('ShardRouter is not initialized. Call initialize() first.');
+    }
+    if (!tenantId || typeof tenantId !== 'string') {
+      throw new Error('tenantId must be a non-empty string');
+    }
+    if (this.tenantShardMap.has(tenantId)) {
+      const shardNum = this.tenantShardMap.get(tenantId)!;
+      return this.routingKeys.get(shardNum);
+    }
+    const numberOfShards = this.metadata.number_of_shards;
+    const shardNum = this.tenantDistributionAlgo(
+      tenantId,
+      this.tenantShardMap,
+      this.shardTenantMap,
+      numberOfShards
+    );
+    if (shardNum < 0 || shardNum >= numberOfShards) {
+      throw new Error(`Distribution algorithm returned invalid shard number: ${shardNum}`);
+    }
+    // Update internal maps
+    this.tenantShardMap.set(tenantId, shardNum);
+    if (!this.shardTenantMap.has(shardNum)) {
+      this.shardTenantMap.set(shardNum, []);
+    }
+    this.shardTenantMap.get(shardNum)!.push(tenantId);
+    return this.routingKeys.get(shardNum);
+  }
+
+  /**
+   * Returns the current mapping of shard numbers to arrays of tenant IDs.
+   */
+  public getShardTenantMapping(): Map<number, string[]> {
+    return new Map(this.shardTenantMap);
   }
 }
